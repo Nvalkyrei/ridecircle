@@ -1,0 +1,3203 @@
+openapi: 3.0.3
+info:
+  title: Ride Circle API
+  description: |
+    Comprehensive API for the Ride Circle peer-to-peer car rental platform.
+    
+    ## Authentication
+    Most endpoints require JWT authentication via Bearer token in the Authorization header.
+    
+    ## Rate Limiting
+    - Public endpoints: 100 requests/minute
+    - Authenticated endpoints: 1000 requests/minute
+    - Admin endpoints: 5000 requests/minute
+    
+    ## Multi-tenancy
+    All requests must include the tenant context via subdomain (mumbai.ridecircle.in) 
+    or X-Tenant-Code header.
+    
+    ## Error Handling
+    All errors follow RFC 7807 Problem Details format with additional context.
+    
+  version: 1.0.0
+  contact:
+    name: Ride Circle API Support
+    email: api-support@ridecircle.in
+  license:
+    name: Proprietary
+    
+servers:
+  - url: https://api.ridecircle.in/v1
+    description: Production server
+  - url: https://staging-api.ridecircle.in/v1
+    description: Staging server
+  - url: http://localhost:3000/api/v1
+    description: Development server
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+
+paths:
+  # =====================================================
+  # AUTHENTICATION & USER MANAGEMENT
+  # =====================================================
+  
+  /auth/register:
+    post:
+      tags: [Authentication]
+      summary: Register new user
+      description: Register a new user with email/phone verification
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, phone, password, firstName, lastName, role]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: "user@example.com"
+                phone:
+                  type: string
+                  pattern: '^\+91[6-9]\d{9}$'
+                  example: "+919876543210"
+                password:
+                  type: string
+                  minLength: 8
+                  example: "SecurePass123!"
+                firstName:
+                  type: string
+                  minLength: 2
+                  example: "John"
+                lastName:
+                  type: string
+                  minLength: 2
+                  example: "Doe"
+                role:
+                  type: string
+                  enum: [customer, host]
+                  example: "customer"
+                referralCode:
+                  type: string
+                  example: "REF123"
+      responses:
+        '201':
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /auth/login:
+    post:
+      tags: [Authentication]
+      summary: User login
+      description: Authenticate user with email/phone and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, password]
+              properties:
+                identifier:
+                  type: string
+                  description: Email or phone number
+                  example: "user@example.com"
+                password:
+                  type: string
+                  example: "SecurePass123!"
+                deviceInfo:
+                  type: object
+                  properties:
+                    deviceId:
+                      type: string
+                    platform:
+                      type: string
+                      enum: [web, ios, android]
+                    version:
+                      type: string
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '423':
+          description: Account locked due to failed attempts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Refresh access token
+      description: Get new access token using refresh token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: User logout
+      description: Invalidate current session and refresh token
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+
+  /auth/verify-otp:
+    post:
+      tags: [Authentication]
+      summary: Verify OTP
+      description: Verify OTP for phone/email verification
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contact, otp, purpose]
+              properties:
+                contact:
+                  type: string
+                  example: "+919876543210"
+                otp:
+                  type: string
+                  pattern: '^\d{6}$'
+                  example: "123456"
+                purpose:
+                  type: string
+                  enum: [registration, login, password_reset]
+      responses:
+        '200':
+          description: OTP verified successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /auth/resend-otp:
+    post:
+      tags: [Authentication]
+      summary: Resend OTP
+      description: Resend OTP to phone/email
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contact, purpose]
+              properties:
+                contact:
+                  type: string
+                purpose:
+                  type: string
+                  enum: [registration, login, password_reset]
+      responses:
+        '200':
+          description: OTP sent successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  # =====================================================
+  # USER PROFILE MANAGEMENT
+  # =====================================================
+
+  /users/profile:
+    get:
+      tags: [User Management]
+      summary: Get user profile
+      description: Get current user's profile information
+      responses:
+        '200':
+          description: Profile retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [User Management]
+      summary: Update user profile
+      description: Update current user's profile information
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserProfileUpdate'
+      responses:
+        '200':
+          description: Profile updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /users/kyc:
+    post:
+      tags: [User Management]
+      summary: Upload KYC document
+      description: Upload KYC document for verification
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [documentType, documentNumber, file]
+              properties:
+                documentType:
+                  type: string
+                  enum: [aadhaar, pan, driving_license, passport]
+                documentNumber:
+                  type: string
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Document uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KYCDocument'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+    get:
+      tags: [User Management]
+      summary: Get KYC status
+      description: Get current user's KYC verification status
+      responses:
+        '200':
+          description: KYC status retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/KYCDocument'
+                  overallStatus:
+                    type: string
+                    enum: [pending, in_review, approved, rejected]
+                  completionPercentage:
+                    type: number
+                    minimum: 0
+                    maximum: 100
+
+  # =====================================================
+  # VEHICLE MANAGEMENT
+  # =====================================================
+
+  /vehicles:
+    get:
+      tags: [Vehicles]
+      summary: Search vehicles
+      description: Search and filter available vehicles
+      security: []
+      parameters:
+        - name: location
+          in: query
+          description: Location coordinates (lat,lng)
+          schema:
+            type: string
+            pattern: '^-?\d+\.?\d*,-?\d+\.?\d*$'
+            example: "19.0760,72.8777"
+        - name: radius
+          in: query
+          description: Search radius in kilometers
+          schema:
+            type: number
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: startDate
+          in: query
+          description: Booking start date
+          schema:
+            type: string
+            format: date-time
+        - name: endDate
+          in: query
+          description: Booking end date
+          schema:
+            type: string
+            format: date-time
+        - name: categoryId
+          in: query
+          description: Vehicle category filter
+          schema:
+            type: string
+            format: uuid
+        - name: makeId
+          in: query
+          description: Vehicle make filter
+          schema:
+            type: string
+            format: uuid
+        - name: priceMin
+          in: query
+          description: Minimum price per day
+          schema:
+            type: number
+            minimum: 0
+        - name: priceMax
+          in: query
+          description: Maximum price per day
+          schema:
+            type: number
+        - name: transmission
+          in: query
+          description: Transmission type
+          schema:
+            type: string
+            enum: [manual, automatic, cvt]
+        - name: fuelType
+          in: query
+          description: Fuel type
+          schema:
+            type: string
+            enum: [petrol, diesel, cng, electric, hybrid]
+        - name: features
+          in: query
+          description: Required features (comma-separated)
+          schema:
+            type: string
+            example: "bluetooth,ac,gps"
+        - name: sortBy
+          in: query
+          description: Sort criteria
+          schema:
+            type: string
+            enum: [price, rating, distance, popularity]
+            default: distance
+        - name: sortOrder
+          in: query
+          description: Sort order
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+        - name: page
+          in: query
+          description: Page number
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: Items per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: Vehicles retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VehicleSearchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+    post:
+      tags: [Vehicles]
+      summary: Add new vehicle
+      description: Add a new vehicle to the platform (Host only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VehicleCreate'
+      responses:
+        '201':
+          description: Vehicle created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vehicle'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /vehicles/{vehicleId}:
+    get:
+      tags: [Vehicles]
+      summary: Get vehicle details
+      description: Get detailed information about a specific vehicle
+      security: []
+      parameters:
+        - name: vehicleId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Vehicle details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VehicleDetails'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [Vehicles]
+      summary: Update vehicle
+      description: Update vehicle information (Host/Admin only)
+      parameters:
+        - name: vehicleId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VehicleUpdate'
+      responses:
+        '200':
+          description: Vehicle updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vehicle'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Vehicles]
+      summary: Delete vehicle
+      description: Remove vehicle from platform (Host/Admin only)
+      parameters:
+        - name: vehicleId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Vehicle deleted successfully
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /vehicles/{vehicleId}/images:
+    post:
+      tags: [Vehicles]
+      summary: Upload vehicle images
+      description: Upload images for a vehicle
+      parameters:
+        - name: vehicleId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                imageType:
+                  type: string
+                  enum: [exterior, interior, documents]
+                  default: exterior
+      responses:
+        '201':
+          description: Images uploaded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  images:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VehicleImage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /vehicles/{vehicleId}/availability:
+    get:
+      tags: [Vehicles]
+      summary: Get vehicle availability
+      description: Get availability calendar for a vehicle
+      parameters:
+        - name: vehicleId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: startDate
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Availability retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  availability:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VehicleAvailability'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [Vehicles]
+      summary: Update vehicle availability
+      description: Update availability calendar (Host only)
+      parameters:
+        - name: vehicleId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [availability]
+              properties:
+                availability:
+                  type: array
+                  items:
+                    type: object
+                    required: [date, isAvailable]
+                    properties:
+                      date:
+                        type: string
+                        format: date
+                      isAvailable:
+                        type: boolean
+                      priceOverride:
+                        type: number
+                      reason:
+                        type: string
+      responses:
+        '200':
+          description: Availability updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # =====================================================
+  # BOOKING MANAGEMENT
+  # =====================================================
+
+  /bookings:
+    get:
+      tags: [Bookings]
+      summary: Get user bookings
+      description: Get bookings for current user (as customer or host)
+      parameters:
+        - name: role
+          in: query
+          description: Filter by user role in booking
+          schema:
+            type: string
+            enum: [customer, host]
+        - name: status
+          in: query
+          description: Filter by booking status
+          schema:
+            type: string
+            enum: [pending, confirmed, payment_pending, active, completed, cancelled, no_show, disputed]
+        - name: startDate
+          in: query
+          description: Filter bookings from this date
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          description: Filter bookings until this date
+          schema:
+            type: string
+            format: date
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: Bookings retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingListResponse'
+
+    post:
+      tags: [Bookings]
+      summary: Create booking
+      description: Create a new booking request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingCreate'
+      responses:
+        '201':
+          description: Booking created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Vehicle not available for selected dates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bookings/{bookingId}:
+    get:
+      tags: [Bookings]
+      summary: Get booking details
+      description: Get detailed information about a specific booking
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Booking details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingDetails'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [Bookings]
+      summary: Update booking
+      description: Update booking status or details
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingUpdate'
+      responses:
+        '200':
+          description: Booking updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /bookings/{bookingId}/cancel:
+    post:
+      tags: [Bookings]
+      summary: Cancel booking
+      description: Cancel a booking with reason
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 10
+                  maxLength: 500
+      responses:
+        '200':
+          description: Booking cancelled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /bookings/{bookingId}/start-trip:
+    post:
+      tags: [Bookings]
+      summary: Start trip
+      description: Mark trip as started with vehicle handover details
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [startOdometer, fuelLevel]
+              properties:
+                startOdometer:
+                  type: integer
+                  minimum: 0
+                fuelLevel:
+                  type: integer
+                  minimum: 0
+                  maximum: 100
+                vehicleConditionNotes:
+                  type: string
+                handoverImages:
+                  type: array
+                  items:
+                    type: string
+                    format: uri
+      responses:
+        '200':
+          description: Trip started successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /bookings/{bookingId}/end-trip:
+    post:
+      tags: [Bookings]
+      summary: End trip
+      description: Mark trip as completed with vehicle return details
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endOdometer, fuelLevel]
+              properties:
+                endOdometer:
+                  type: integer
+                  minimum: 0
+                fuelLevel:
+                  type: integer
+                  minimum: 0
+                  maximum: 100
+                vehicleConditionNotes:
+                  type: string
+                returnImages:
+                  type: array
+                  items:
+                    type: string
+                    format: uri
+                damageReported:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Trip ended successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # =====================================================
+  # PAYMENT MANAGEMENT
+  # =====================================================
+
+  /payments:
+    get:
+      tags: [Payments]
+      summary: Get payment history
+      description: Get payment history for current user
+      parameters:
+        - name: bookingId
+          in: query
+          description: Filter by booking ID
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          description: Filter by payment status
+          schema:
+            type: string
+            enum: [pending, processing, completed, failed, refunded, disputed]
+        - name: transactionType
+          in: query
+          description: Filter by transaction type
+          schema:
+            type: string
+            enum: [booking, security_deposit, refund, penalty, commission]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: Payment history retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentListResponse'
+
+  /payments/{paymentId}:
+    get:
+      tags: [Payments]
+      summary: Get payment details
+      description: Get detailed information about a specific payment
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Payment details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /payments/process:
+    post:
+      tags: [Payments]
+      summary: Process payment
+      description: Process payment for a booking
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bookingId, paymentMethod, amount]
+              properties:
+                bookingId:
+                  type: string
+                  format: uuid
+                paymentMethod:
+                  type: string
+                  enum: [card, upi, netbanking, wallet]
+                amount:
+                  type: number
+                  minimum: 0
+                transactionType:
+                  type: string
+                  enum: [booking, security_deposit]
+                  default: booking
+                gatewayData:
+                  type: object
+                  description: Gateway-specific payment data
+      responses:
+        '200':
+          description: Payment processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '402':
+          description: Payment failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /payments/{paymentId}/refund:
+    post:
+      tags: [Payments]
+      summary: Process refund
+      description: Process refund for a payment (Admin only)
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, reason]
+              properties:
+                amount:
+                  type: number
+                  minimum: 0
+                reason:
+                  type: string
+                  minLength: 10
+      responses:
+        '200':
+          description: Refund processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # =====================================================
+  # REVIEWS & RATINGS
+  # =====================================================
+
+  /reviews:
+    get:
+      tags: [Reviews]
+      summary: Get reviews
+      description: Get reviews for vehicles or users
+      parameters:
+        - name: vehicleId
+          in: query
+          description: Filter by vehicle ID
+          schema:
+            type: string
+            format: uuid
+        - name: userId
+          in: query
+          description: Filter by user ID (reviewee)
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: Reviews retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewListResponse'
+
+    post:
+      tags: [Reviews]
+      summary: Create review
+      description: Create a review for a completed booking
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewCreate'
+      responses:
+        '201':
+          description: Review created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Review'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Review already exists for this booking
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /reviews/{reviewId}:
+    get:
+      tags: [Reviews]
+      summary: Get review details
+      description: Get detailed information about a specific review
+      parameters:
+        - name: reviewId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Review details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Review'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [Reviews]
+      summary: Update review
+      description: Update a review (within 24 hours of creation)
+      parameters:
+        - name: reviewId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewUpdate'
+      responses:
+        '200':
+          description: Review updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Review'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # =====================================================
+  # NOTIFICATIONS
+  # =====================================================
+
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: Get notifications
+      description: Get notifications for current user
+      parameters:
+        - name: type
+          in: query
+          description: Filter by notification type
+          schema:
+            type: string
+            enum: [booking_request, booking_confirmed, payment_received, trip_started, trip_completed, review_received, system_alert, promotional]
+        - name: isRead
+          in: query
+          description: Filter by read status
+          schema:
+            type: boolean
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: Notifications retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationListResponse'
+
+  /notifications/{notificationId}/read:
+    post:
+      tags: [Notifications]
+      summary: Mark notification as read
+      description: Mark a specific notification as read
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Notification marked as read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /notifications/read-all:
+    post:
+      tags: [Notifications]
+      summary: Mark all notifications as read
+      description: Mark all notifications as read for current user
+      responses:
+        '200':
+          description: All notifications marked as read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+
+  # =====================================================
+  # MESSAGING
+  # =====================================================
+
+  /messages:
+    get:
+      tags: [Messaging]
+      summary: Get messages
+      description: Get messages for a booking conversation
+      parameters:
+        - name: bookingId
+          in: query
+          required: true
+          description: Booking ID for the conversation
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: Messages retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageListResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags: [Messaging]
+      summary: Send message
+      description: Send a message in a booking conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bookingId, message]
+              properties:
+                bookingId:
+                  type: string
+                  format: uuid
+                message:
+                  type: string
+                  minLength: 1
+                  maxLength: 1000
+                messageType:
+                  type: string
+                  enum: [text, image, location]
+                  default: text
+                metadata:
+                  type: object
+      responses:
+        '201':
+          description: Message sent successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # =====================================================
+  # INCIDENTS & DAMAGE REPORTS
+  # =====================================================
+
+  /incidents:
+    get:
+      tags: [Incidents]
+      summary: Get incidents
+      description: Get incidents for current user's bookings
+      parameters:
+        - name: bookingId
+          in: query
+          description: Filter by booking ID
+          schema:
+            type: string
+            format: uuid
+        - name: type
+          in: query
+          description: Filter by incident type
+          schema:
+            type: string
+            enum: [damage, accident, theft, breakdown, traffic_violation]
+        - name: status
+          in: query
+          description: Filter by incident status
+          schema:
+            type: string
+            enum: [reported, investigating, resolved, disputed, closed]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: Incidents retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentListResponse'
+
+    post:
+      tags: [Incidents]
+      summary: Report incident
+      description: Report a new incident for a booking
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncidentCreate'
+      responses:
+        '201':
+          description: Incident reported successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Incident'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /incidents/{incidentId}:
+    get:
+      tags: [Incidents]
+      summary: Get incident details
+      description: Get detailed information about a specific incident
+      parameters:
+        - name: incidentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Incident details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentDetails'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [Incidents]
+      summary: Update incident
+      description: Update incident status or details (Admin only)
+      parameters:
+        - name: incidentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncidentUpdate'
+      responses:
+        '200':
+          description: Incident updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Incident'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /incidents/{incidentId}/evidence:
+    post:
+      tags: [Incidents]
+      summary: Upload incident evidence
+      description: Upload evidence files for an incident
+      parameters:
+        - name: incidentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                fileType:
+                  type: string
+                  enum: [image, document, video]
+                  default: image
+                description:
+                  type: string
+      responses:
+        '201':
+          description: Evidence uploaded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  evidence:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/IncidentEvidence'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # =====================================================
+  # ADMIN ENDPOINTS
+  # =====================================================
+
+  /admin/users:
+    get:
+      tags: [Admin]
+      summary: Get all users
+      description: Get paginated list of all users (Admin only)
+      security:
+        - BearerAuth: [admin]
+      parameters:
+        - name: role
+          in: query
+          description: Filter by user role
+          schema:
+            type: string
+            enum: [customer, host, admin]
+        - name: status
+          in: query
+          description: Filter by user status
+          schema:
+            type: string
+            enum: [pending, active, suspended, banned]
+        - name: kycStatus
+          in: query
+          description: Filter by KYC status
+          schema:
+            type: string
+            enum: [pending, in_review, approved, rejected]
+        - name: search
+          in: query
+          description: Search by name, email, or phone
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Users retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserListResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/users/{userId}/status:
+    put:
+      tags: [Admin]
+      summary: Update user status
+      description: Update user status (Admin only)
+      security:
+        - BearerAuth: [admin]
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [active, suspended, banned]
+                reason:
+                  type: string
+                  minLength: 10
+      responses:
+        '200':
+          description: User status updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/vehicles/pending:
+    get:
+      tags: [Admin]
+      summary: Get pending vehicle approvals
+      description: Get vehicles pending approval (Admin only)
+      security:
+        - BearerAuth: [admin]
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: Pending vehicles retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VehicleListResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/vehicles/{vehicleId}/approve:
+    post:
+      tags: [Admin]
+      summary: Approve vehicle
+      description: Approve a vehicle for listing (Admin only)
+      security:
+        - BearerAuth: [admin]
+      parameters:
+        - name: vehicleId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notes:
+                  type: string
+      responses:
+        '200':
+          description: Vehicle approved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vehicle'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /admin/vehicles/{vehicleId}/reject:
+    post:
+      tags: [Admin]
+      summary: Reject vehicle
+      description: Reject a vehicle listing (Admin only)
+      security:
+        - BearerAuth: [admin]
+      parameters:
+        - name: vehicleId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 10
+      responses:
+        '200':
+          description: Vehicle rejected successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vehicle'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/analytics/dashboard:
+    get:
+      tags: [Admin]
+      summary: Get dashboard analytics
+      description: Get key metrics for admin dashboard
+      security:
+        - BearerAuth: [admin]
+      parameters:
+        - name: period
+          in: query
+          description: Time period for analytics
+          schema:
+            type: string
+            enum: [today, week, month, quarter, year]
+            default: month
+      responses:
+        '200':
+          description: Analytics retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminAnalytics'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # =====================================================
+  # UTILITY ENDPOINTS
+  # =====================================================
+
+  /health:
+    get:
+      tags: [Utility]
+      summary: Health check
+      description: API health check endpoint
+      security: []
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "healthy"
+                  timestamp:
+                    type: string
+                    format: date-time
+                  version:
+                    type: string
+                    example: "1.0.0"
+                  services:
+                    type: object
+                    properties:
+                      database:
+                        type: string
+                        enum: [healthy, unhealthy]
+                      redis:
+                        type: string
+                        enum: [healthy, unhealthy]
+                      storage:
+                        type: string
+                        enum: [healthy, unhealthy]
+
+  /config:
+    get:
+      tags: [Utility]
+      summary: Get public configuration
+      description: Get public configuration for the client
+      security: []
+      responses:
+        '200':
+          description: Configuration retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant:
+                    $ref: '#/components/schemas/Tenant'
+                  features:
+                    type: object
+                    properties:
+                      instantBooking:
+                        type: boolean
+                      chatMessaging:
+                        type: boolean
+                      dynamicPricing:
+                        type: boolean
+                  paymentMethods:
+                    type: array
+                    items:
+                      type: string
+                      enum: [card, upi, netbanking, wallet]
+                  supportedLanguages:
+                    type: array
+                    items:
+                      type: string
+
+# =====================================================
+# COMPONENTS
+# =====================================================
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  schemas:
+    # Common schemas
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Operation completed successfully"
+        timestamp:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: "An error occurred"
+        errors:
+          type: array
+          items:
+            type: string
+        code:
+          type: string
+          example: "VALIDATION_ERROR"
+        timestamp:
+          type: string
+          format: date-time
+
+    PaginationMeta:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          example: 100
+        totalPages:
+          type: integer
+          example: 5
+        hasNext:
+          type: boolean
+          example: true
+        hasPrev:
+          type: boolean
+          example: false
+
+    # Authentication schemas
+    AuthResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            user:
+              $ref: '#/components/schemas/UserProfile'
+            tokens:
+              $ref: '#/components/schemas/TokenResponse'
+        message:
+          type: string
+          example: "Authentication successful"
+
+    TokenResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        refreshToken:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        expiresIn:
+          type: integer
+          example: 900
+        tokenType:
+          type: string
+          example: "Bearer"
+
+    # User schemas
+    UserProfile:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        role:
+          type: string
+          enum: [customer, host, admin]
+        status:
+          type: string
+          enum: [pending, active, suspended, banned]
+        firstName:
+          type: string
+        lastName:
+          type: string
+        profileImageUrl:
+          type: string
+          format: uri
+        emailVerified:
+          type: boolean
+        phoneVerified:
+          type: boolean
+        kycStatus:
+          type: string
+          enum: [pending, in_review, approved, rejected]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    UserProfileUpdate:
+      type: object
+      properties:
+        firstName:
+          type: string
+          minLength: 2
+        lastName:
+          type: string
+          minLength: 2
+        dateOfBirth:
+          type: string
+          format: date
+        gender:
+          type: string
+          enum: [male, female, other]
+        address:
+          type: object
+          properties:
+            street:
+              type: string
+            city:
+              type: string
+            state:
+              type: string
+            pincode:
+              type: string
+            country:
+              type: string
+        emergencyContact:
+          type: object
+          properties:
+            name:
+              type: string
+            phone:
+              type: string
+            relationship:
+              type: string
+
+    KYCDocument:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        documentType:
+          type: string
+          enum: [aadhaar, pan, driving_license, passport]
+        documentNumber:
+          type: string
+        documentUrl:
+          type: string
+          format: uri
+        verificationStatus:
+          type: string
+          enum: [pending, in_review, approved, rejected, expired]
+        verifiedAt:
+          type: string
+          format: date-time
+        rejectionReason:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    # Vehicle schemas
+    Vehicle:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        hostId:
+          type: string
+          format: uuid
+        make:
+          type: string
+          example: "Honda"
+        model:
+          type: string
+          example: "City"
+        year:
+          type: integer
+          example: 2020
+        registrationNumber:
+          type: string
+          example: "MH01AB1234"
+        color:
+          type: string
+          example: "Silver"
+        fuelType:
+          type: string
+          enum: [petrol, diesel, cng, electric, hybrid]
+        transmission:
+          type: string
+          enum: [manual, automatic, cvt]
+        seatingCapacity:
+          type: integer
+          example: 5
+        status:
+          type: string
+          enum: [draft, pending_approval, active, inactive, maintenance, retired]
+        location:
+          type: object
+          properties:
+            lat:
+              type: number
+              example: 19.0760
+            lng:
+              type: number
+              example: 72.8777
+        address:
+          type: object
+          properties:
+            street:
+              type: string
+            area:
+              type: string
+            city:
+              type: string
+            state:
+              type: string
+            pincode:
+              type: string
+        basePricePerDay:
+          type: number
+          example: 2500
+        basePricePerHour:
+          type: number
+          example: 350
+        securityDeposit:
+          type: number
+          example: 5000
+        features:
+          type: array
+          items:
+            type: string
+          example: ["bluetooth", "ac", "gps"]
+        averageRating:
+          type: number
+          example: 4.5
+        totalTrips:
+          type: integer
+          example: 25
+        createdAt:
+          type: string
+          format: date-time
+
+    VehicleCreate:
+      type: object
+      required: [modelId, registrationNumber, year, fuelType, transmission, seatingCapacity, location, address, basePricePerDay, securityDeposit]
+      properties:
+        modelId:
+          type: string
+          format: uuid
+        registrationNumber:
+          type: string
+        year:
+          type: integer
+          minimum: 2000
+          maximum: 2025
+        color:
+          type: string
+        fuelType:
+          type: string
+          enum: [petrol, diesel, cng, electric, hybrid]
+        transmission:
+          type: string
+          enum: [manual, automatic, cvt]
+        seatingCapacity:
+          type: integer
+          minimum: 2
+          maximum: 8
+        location:
+          type: object
+          required: [lat, lng]
+          properties:
+            lat:
+              type: number
+            lng:
+              type: number
+        address:
+          type: object
+          required: [street, city, state, pincode]
+          properties:
+            street:
+              type: string
+            area:
+              type: string
+            city:
+              type: string
+            state:
+              type: string
+            pincode:
+              type: string
+        basePricePerDay:
+          type: number
+          minimum: 500
+        basePricePerHour:
+          type: number
+          minimum: 50
+        securityDeposit:
+          type: number
+          minimum: 1000
+        features:
+          type: array
+          items:
+            type: string
+        rules:
+          type: object
+          properties:
+            smoking:
+              type: boolean
+            pets:
+              type: boolean
+            mileageLimit:
+              type: integer
+
+    VehicleUpdate:
+      type: object
+      properties:
+        color:
+          type: string
+        status:
+          type: string
+          enum: [active, inactive, maintenance]
+        basePricePerDay:
+          type: number
+          minimum: 500
+        basePricePerHour:
+          type: number
+          minimum: 50
+        securityDeposit:
+          type: number
+          minimum: 1000
+        features:
+          type: array
+          items:
+            type: string
+        rules:
+          type: object
+        pickupInstructions:
+          type: string
+
+    VehicleDetails:
+      allOf:
+        - $ref: '#/components/schemas/Vehicle'
+        - type: object
+          properties:
+            host:
+              type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                firstName:
+                  type: string
+                lastName:
+                  type: string
+                profileImageUrl:
+                  type: string
+                averageRating:
+                  type: number
+                totalTrips:
+                  type: integer
+                joinedAt:
+                  type: string
+                  format: date-time
+            images:
+              type: array
+              items:
+                $ref: '#/components/schemas/VehicleImage'
+            reviews:
+              type: array
+              items:
+                $ref: '#/components/schemas/Review'
+            availability:
+              type: array
+              items:
+                $ref: '#/components/schemas/VehicleAvailability'
+
+    VehicleImage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        imageUrl:
+          type: string
+          format: uri
+        imageType:
+          type: string
+          enum: [exterior, interior, documents]
+        isPrimary:
+          type: boolean
+        sortOrder:
+          type: integer
+
+    VehicleAvailability:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        isAvailable:
+          type: boolean
+        priceOverride:
+          type: number
+        reason:
+          type: string
+
+    VehicleSearchResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Vehicle'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+        filters:
+          type: object
+          properties:
+            appliedFilters:
+              type: object
+            availableFilters:
+              type: object
+
+    VehicleListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Vehicle'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    # Booking schemas
+    Booking:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        bookingNumber:
+          type: string
+          example: "RC2024001234"
+        customerId:
+          type: string
+          format: uuid
+        hostId:
+          type: string
+          format: uuid
+        vehicleId:
+          type: string
+          format: uuid
+        startDate:
+          type: string
+          format: date-time
+        endDate:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [pending, confirmed, payment_pending, active, completed, cancelled, no_show, disputed]
+        baseAmount:
+          type: number
+        taxes:
+          type: number
+        fees:
+          type: number
+        discounts:
+          type: number
+        totalAmount:
+          type: number
+        securityDeposit:
+          type: number
+        paymentStatus:
+          type: string
+        pickupLocation:
+          type: object
+          properties:
+            lat:
+              type: number
+            lng:
+              type: number
+        dropoffLocation:
+          type: object
+          properties:
+            lat:
+              type: number
+            lng:
+              type: number
+        actualStartTime:
+          type: string
+          format: date-time
+        actualEndTime:
+          type: string
+          format: date-time
+        startOdometer:
+          type: integer
+        endOdometer:
+          type: integer
+        fuelLevelStart:
+          type: integer
+        fuelLevelEnd:
+          type: integer
+        specialRequests:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    BookingCreate:
+      type: object
+      required: [vehicleId, startDate, endDate]
+      properties:
+        vehicleId:
+          type: string
+          format: uuid
+        startDate:
+          type: string
+          format: date-time
+        endDate:
+          type: string
+          format: date-time
+        pickupLocation:
+          type: object
+          properties:
+            lat:
+              type: number
+            lng:
+              type: number
+        dropoffLocation:
+          type: object
+          properties:
+            lat:
+              type: number
+            lng:
+              type: number
+        specialRequests:
+          type: string
+          maxLength: 500
+
+    BookingUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [confirmed, cancelled]
+        specialRequests:
+          type: string
+        startOdometer:
+          type: integer
+        endOdometer:
+          type: integer
+        fuelLevelStart:
+          type: integer
+        fuelLevelEnd:
+          type: integer
+
+    BookingDetails:
+      allOf:
+        - $ref: '#/components/schemas/Booking'
+        - type: object
+          properties:
+            customer:
+              type: object
+              properties:
+                id:
+                  type: string
+                firstName:
+                  type: string
+                lastName:
+                  type: string
+                profileImageUrl:
+                  type: string
+                phone:
+                  type: string
+            host:
+              type: object
+              properties:
+                id:
+                  type: string
+                firstName:
+                  type: string
+                lastName:
+                  type: string
+                profileImageUrl:
+                  type: string
+                phone:
+                  type: string
+            vehicle:
+              $ref: '#/components/schemas/Vehicle'
+            payments:
+              type: array
+              items:
+                $ref: '#/components/schemas/Payment'
+            statusHistory:
+              type: array
+              items:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  changedAt:
+                    type: string
+                    format: date-time
+                  changedBy:
+                    type: string
+                  reason:
+                    type: string
+
+    BookingListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Booking'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    # Payment schemas
+    Payment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        bookingId:
+          type: string
+          format: uuid
+        amount:
+          type: number
+        currency:
+          type: string
+          example: "INR"
+        paymentMethod:
+          type: string
+          enum: [card, upi, netbanking, wallet, cash]
+        transactionType:
+          type: string
+          enum: [booking, security_deposit, refund, penalty, commission]
+        status:
+          type: string
+          enum: [pending, processing, completed, failed, refunded, disputed]
+        gatewayProvider:
+          type: string
+        gatewayTransactionId:
+          type: string
+        processedAt:
+          type: string
+          format: date-time
+        failedReason:
+          type: string
+        refundAmount:
+          type: number
+        refundedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    PaymentResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/Payment'
+        gatewayData:
+          type: object
+          description: Gateway-specific response data
+
+    PaymentListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Payment'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    # Review schemas
+    Review:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        bookingId:
+          type: string
+          format: uuid
+        reviewerId:
+          type: string
+          format: uuid
+        revieweeId:
+          type: string
+          format: uuid
+        vehicleId:
+          type: string
+          format: uuid
+        overallRating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        cleanlinessRating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        communicationRating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        vehicleConditionRating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        title:
+          type: string
+        comment:
+          type: string
+        isPublished:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        reviewer:
+          type: object
+          properties:
+            firstName:
+              type: string
+            lastName:
+              type: string
+            profileImageUrl:
+              type: string
+
+    ReviewCreate:
+      type: object
+      required: [bookingId, revieweeId, overallRating]
+      properties:
+        bookingId:
+          type: string
+          format: uuid
+        revieweeId:
+          type: string
+          format: uuid
+        vehicleId:
+          type: string
+          format: uuid
+        overallRating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        cleanlinessRating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        communicationRating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        vehicleConditionRating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        title:
+          type: string
+          maxLength: 255
+        comment:
+          type: string
+          maxLength: 1000
+
+    ReviewUpdate:
+      type: object
+      properties:
+        overallRating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        cleanlinessRating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        communicationRating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        vehicleConditionRating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        title:
+          type: string
+          maxLength: 255
+        comment:
+          type: string
+          maxLength: 1000
+
+    ReviewListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Review'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+        averageRating:
+          type: number
+        ratingDistribution:
+          type: object
+          properties:
+            "5":
+              type: integer
+            "4":
+              type: integer
+            "3":
+              type: integer
+            "2":
+              type: integer
+            "1":
+              type: integer
+
+    # Notification schemas
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [booking_request, booking_confirmed, payment_received, trip_started, trip_completed, review_received, system_alert, promotional]
+        title:
+          type: string
+        message:
+          type: string
+        data:
+          type: object
+        isRead:
+          type: boolean
+        sentAt:
+          type: string
+          format: date-time
+        readAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    NotificationListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+        unreadCount:
+          type: integer
+
+    # Message schemas
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        bookingId:
+          type: string
+          format: uuid
+        senderId:
+          type: string
+          format: uuid
+        recipientId:
+          type: string
+          format: uuid
+        message:
+          type: string
+        messageType:
+          type: string
+          enum: [text, image, location]
+        metadata:
+          type: object
+        readAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        sender:
+          type: object
+          properties:
+            firstName:
+              type: string
+            lastName:
+              type: string
+            profileImageUrl:
+              type: string
+
+    MessageListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    # Incident schemas
+    Incident:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        bookingId:
+          type: string
+          format: uuid
+        reportedBy:
+          type: string
+          format: uuid
+        vehicleId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [damage, accident, theft, breakdown, traffic_violation]
+        status:
+          type: string
+          enum: [reported, investigating, resolved, disputed, closed]
+        title:
+          type: string
+        description:
+          type: string
+        location:
+          type: object
+          properties:
+            lat:
+              type: number
+            lng:
+              type: number
+        occurredAt:
+          type: string
+          format: date-time
+        estimatedCost:
+          type: number
+        actualCost:
+          type: number
+        insuranceClaimNumber:
+          type: string
+        resolvedAt:
+          type: string
+          format: date-time
+        resolutionNotes:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    IncidentCreate:
+      type: object
+      required: [bookingId, vehicleId, type, title, description]
+      properties:
+        bookingId:
+          type: string
+          format: uuid
+        vehicleId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [damage, accident, theft, breakdown, traffic_violation]
+        title:
+          type: string
+          minLength: 5
+          maxLength: 255
+        description:
+          type: string
+          minLength: 20
+          maxLength: 2000
+        location:
+          type: object
+          properties:
+            lat:
+              type: number
+            lng:
+              type: number
+        occurredAt:
+          type: string
+          format: date-time
+        estimatedCost:
+          type: number
+          minimum: 0
+
+    IncidentUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [investigating, resolved, disputed, closed]
+        actualCost:
+          type: number
+          minimum: 0
+        insuranceClaimNumber:
+          type: string
+        resolutionNotes:
+          type: string
+
+    IncidentDetails:
+      allOf:
+        - $ref: '#/components/schemas/Incident'
+        - type: object
+          properties:
+            booking:
+              type: object
+              properties:
+                bookingNumber:
+                  type: string
+                startDate:
+                  type: string
+                  format: date-time
+                endDate:
+                  type: string
+                  format: date-time
+            vehicle:
+              type: object
+              properties:
+                make:
+                  type: string
+                model:
+                  type: string
+                registrationNumber:
+                  type: string
+            evidence:
+              type: array
+              items:
+                $ref: '#/components/schemas/IncidentEvidence'
+
+    IncidentEvidence:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        fileUrl:
+          type: string
+          format: uri
+        fileType:
+          type: string
+          enum: [image, document, video]
+        description:
+          type: string
+        uploadedBy:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+
+    IncidentListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Incident'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    # Admin schemas
+    AdminUserListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/UserProfile'
+              - type: object
+                properties:
+                  totalBookings:
+                    type: integer
+                  totalEarnings:
+                    type: number
+                  lastActivity:
+                    type: string
+                    format: date-time
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    AdminAnalytics:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            overview:
+              type: object
+              properties:
+                totalUsers:
+                  type: integer
+                totalVehicles:
+                  type: integer
+                totalBookings:
+                  type: integer
+                totalRevenue:
+                  type: number
+                activeBookings:
+                  type: integer
+            growth:
+              type: object
+              properties:
+                userGrowth:
+                  type: number
+                vehicleGrowth:
+                  type: number
+                bookingGrowth:
+                  type: number
+                revenueGrowth:
+                  type: number
+            charts:
+              type: object
+              properties:
+                bookingsByDay:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      date:
+                        type: string
+                        format: date
+                      count:
+                        type: integer
+                revenueByMonth:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      month:
+                        type: string
+                      revenue:
+                        type: number
+                topVehicles:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      vehicleId:
+                        type: string
+                      make:
+                        type: string
+                      model:
+                        type: string
+                      bookings:
+                        type: integer
+                      revenue:
+                        type: number
+
+    # Utility schemas
+    Tenant:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          example: "mumbai"
+        name:
+          type: string
+          example: "Mumbai"
+        subdomain:
+          type: string
+          example: "mumbai"
+        region:
+          type: string
+          example: "Western India"
+        timezone:
+          type: string
+          example: "Asia/Kolkata"
+        currency:
+          type: string
+          example: "INR"
+        language:
+          type: string
+          example: "en-IN"
+
+  responses:
+    BadRequest:
+      description: Bad request - Invalid input parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: "Validation failed"
+            errors: ["Email is required", "Phone number is invalid"]
+            code: "VALIDATION_ERROR"
+            timestamp: "2024-01-15T10:30:00Z"
+
+    Unauthorized:
+      description: Unauthorized - Invalid or missing authentication
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: "Authentication required"
+            code: "UNAUTHORIZED"
+            timestamp: "2024-01-15T10:30:00Z"
+
+    Forbidden:
+      description: Forbidden - Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: "Access denied"
+            code: "FORBIDDEN"
+            timestamp: "2024-01-15T10:30:00Z"
+
+    NotFound:
+      description: Not found - Resource does not exist
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: "Resource not found"
+            code: "NOT_FOUND"
+            timestamp: "2024-01-15T10:30:00Z"
+
+    Conflict:
+      description: Conflict - Resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: "Email already registered"
+            code: "CONFLICT"
+            timestamp: "2024-01-15T10:30:00Z"
+
+    TooManyRequests:
+      description: Too many requests - Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: "Rate limit exceeded"
+            code: "RATE_LIMIT_EXCEEDED"
+            timestamp: "2024-01-15T10:30:00Z"
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: "Internal server error"
+            code: "INTERNAL_ERROR"
+            timestamp: "2024-01-15T10:30:00Z"

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ridecircle
+  labels:
+    name: ridecircle
+    environment: production
